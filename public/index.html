@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Gateway de Pagamentos</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%232ecc71'%3E%3Cpath d='M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z'/%3E%3C/svg%3E">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; color: #34495e; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        textarea { font-family: monospace; height: 150px; }
+        button { background-color: #2ecc71; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; font-weight: bold; }
+        button:hover { background-color: #27ae60; }
+        .response-box { margin-top: 20px; padding: 15px; border-radius: 4px; display: none; font-family: monospace; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Envio de Webhooks</h1>
+    <p>Este painel simula o comportamento de um Gateway de Pagamento enviando uma notificação para a sua API.</p>
+    
+    <div class="form-group">
+        <label for="tipoEvento">Tipo do Evento:</label>
+        <select id="tipoEvento">
+            <option value="payment.authorized">payment.authorized (Pago com Sucesso)</option>
+            <option value="payment.refunded">payment.refunded (Estornado/Devolvido)</option>
+            <option value="payment.failed">payment.failed (Recusado/Sem Saldo)</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="payload">Payload do Evento (JSON):</label>
+        <textarea id="payload"></textarea>
+    </div>
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" id="corromperAssinatura" style="width: auto; display: inline-block;"> 
+            ⚠️ Corromper assinatura de propósito (Testar Hacker / Invasão)
+        </label>
+    </div>
+
+    <button onclick="enviarWebhook()">Disparar Webhook para a API</button>
+
+    <div id="resultado" class="response-box"></div>
+</div>
+
+<script>
+    const gerarIdEvento = () => 'evt_' + Math.random().toString(36).substr(2, 9);
+
+    const preencherPayloadPadrao = () => {
+        const dados = {
+            id_evento: gerarIdEvento(),
+            tipo: document.getElementById('tipoEvento').value,
+            status: "success",
+            payload: {
+                valor: 180.00,
+                moeda: "BRL",
+                cliente: {
+                    nome: "Jean",
+                    email: "jean@teste.com.br"
+                },
+                metodo_pagamento: "pix"
+            }
+        };
+        document.getElementById('payload').value = JSON.stringify(dados, null, 2);
+    };
+
+    document.getElementById('tipoEvento').addEventListener('change', (e) => {
+        const json = JSON.parse(document.getElementById('payload').value);
+        json.tipo = e.target.value;
+        if(e.target.value === 'payment.failed') json.status = 'failed';
+        else if(e.target.value === 'payment.refunded') json.status = 'refunded';
+        else json.status = 'success';
+        document.getElementById('payload').value = JSON.stringify(json, null, 2);
+    });
+
+    preencherPayloadPadrao();
+
+    async function enviarWebhook() {
+        const resultadoDiv = document.getElementById('resultado');
+        const corromper = document.getElementById('corromperAssinatura').checked;
+        const payloadRaw = document.getElementById('payload').value;
+        
+        try {
+            const resSign = await fetch('/debug/generate-signature', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: payloadRaw
+            });
+            
+            const dadosSign = await resSign.json();
+            let assinatura = dadosSign.signature;
+
+            if (corromper) {
+                assinatura = assinatura.replace(/[a-z]/, 'X');
+            }
+
+            const resposta = await fetch('/webhook/v1/payments', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Webhook-Signature': assinatura
+                },
+                body: payloadRaw
+            });
+
+            const dadosResposta = await resposta.json();
+            
+            resultadoDiv.style.display = 'block';
+            if (resposta.ok) {
+                resultadoDiv.className = 'response-box success';
+                resultadoDiv.innerHTML = `<strong>Status ${resposta.status}: Sucesso!</strong><br><br>Resposta da API:<br>${JSON.stringify(dadosResposta, null, 2)}`;
+                
+                // O temporizador automático que alterava o ID do evento foi removido daqui!
+            } else {
+                resultadoDiv.className = 'response-box error';
+                resultadoDiv.innerHTML = `<strong>Status ${resposta.status}: Rejeitado!</strong><br><br>Resposta da API:<br>${JSON.stringify(dadosResposta, null, 2)}`;
+            }
+
+        } catch (erro) {
+            resultadoDiv.style.display = 'block';
+            resultadoDiv.className = 'response-box error';
+            resultadoDiv.innerHTML = `Erro na requisição: ${erro.message}`;
+        }
+    }
+</script>
+</body>
+</html>
